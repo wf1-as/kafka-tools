@@ -2,51 +2,52 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Confluent.Kafka;
+using Microsoft.Extensions.Hosting;
 
 namespace KafkaTools
 {
-    internal class KafkaReader
+    public class KafkaReader : BackgroundService
     {
-        public Dictionary<string, string> Settings;
+        private readonly IConsumerProvider _consumerProvider;
 
-        private Dictionary<string, int> _UsersWithNames = new Dictionary<string, int>();
-
-        public KafkaReader(Dictionary<string, string> settings)
+        public KafkaReader(IConsumerProvider consumerProvider)
         {
-            settings["group.id"] = Guid.NewGuid().ToString();
-            settings["session.timeout.ms"] = "45000";
-            settings["auto.offset.reset"] = "earliest";
-            Settings = settings;
+            _consumerProvider = consumerProvider;
         }
 
-        public void Run(CancellationToken Token)
+        private Dictionary<string, int> _usernamesWithAges = new Dictionary<string, int>();
+
+
+        protected override Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var reader = new ConsumerBuilder<string, User>(Settings)
-                         .SetValueDeserializer(new JsonSerializer<User>())
-                         .SetKeyDeserializer(Deserializers.Utf8)
-                         .Build();
+            using var reader = _consumerProvider.GetConsumer();
 
             reader.Subscribe("UserTopic");
-            while (!Token.IsCancellationRequested)
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var result = reader.Consume(Token);
+                var result = reader.Consume(stoppingToken);
                 Message<string, User> message = result.Message;
-                Console.WriteLine("User " + message.Value.Name + " received");
+                Console.WriteLine("User " + message.Value.Username + " received");
+                if (message.Key == null)
+                {
+                    continue;
+                }
 
-                _UsersWithNames[message.Key] = message.Value.Age;
+                _usernamesWithAges[message.Key] = message.Value.Age;
                 PrintUsers();
             }
 
-            reader.Dispose();
+            return Task.CompletedTask;
         }
 
         private void PrintUsers()
         {
-            var keys = _UsersWithNames.Keys.ToList();
+            var keys = _usernamesWithAges.Keys.ToList();
             foreach (var username in keys)
             {
-                var age = _UsersWithNames[username];
+                var age = _usernamesWithAges[username];
                 Console.WriteLine(username + " is " + age + " years old");
             }
         }
